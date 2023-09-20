@@ -5,9 +5,6 @@ import math
 data = pd.read_csv('zoo.csv')
 legs = pd.get_dummies(data.legs, prefix='has_legs', columns=['legs']).astype(int)
 data[legs.columns] = legs
-data.pop('legs')
-class_type = data.pop('class_type')
-data.insert(len(data.columns), 'class_type', class_type)
 
 train = data.sample(frac=.7)
 test = data.drop(train.index)
@@ -25,6 +22,9 @@ def calculate_B_A(a):
         instances_of_class = train[train["class_type"] == class_val].drop("animal_name",axis=1).drop("class_type",axis=1)
         length = len(instances_of_class)
         for col in instances_of_class:
+            if col == "legs":
+                continue
+
             count = instances_of_class[col].sum(numeric_only=True)
             key = (col, 1, class_val)
             not_key = (col, 0, class_val)
@@ -33,26 +33,33 @@ def calculate_B_A(a):
     
     return feature_probabilities_given_class
         
-pA_values = calculate_pA(1)
+pA_values = calculate_pA(.01)
 
-pB_A_values = calculate_B_A(1)
+pB_A_values = calculate_B_A(.01)
 
+final = pd.DataFrame()
 
 for index, row in test.iterrows():
-    classes_raw = {}
+    classes_raw = []
     for class_val in range(1,8):
         feature_odds = []
         keys_row = row.drop(labels=["animal_name", "class_type"])
         for col_name,col_val in keys_row.items():
+            if col_name == "legs":
+                continue
             feature_odds.append(math.log2(pB_A_values[(col_name, col_val, class_val)]))
-        classes_raw[class_val] = pow(2, math.log2(pA_values[class_val]) + sum(feature_odds))
+        classes_raw.append(pow(2, math.log2(pA_values[class_val]) + sum(feature_odds)))
     
     norm_total = sum(classes_raw)
-    classes_norm = {class_val: val for class_val, val in classes_raw.items()}
-    predict = max(classes_norm, key=lambda class_val: classes_norm[class_val])
 
-    prediction_data = pd.Series({'predicted': predict, 'probability': classes_norm[predict], 'correct?': "CORRECT" if row["class_type"] == predict else "wrong" })
-    row_frame = row.to_frame()
-    prediction_frame = prediction_data.to_frame()
-    output = pd.concat([row_frame, prediction_data], axis=0)
-    print(output.T.to_csv())
+    classes_norm = [prob / norm_total for prob in classes_raw]
+    prediction = max( (prob, index+1) for index, prob in enumerate(classes_norm))
+
+    prediction_data = pd.DataFrame(data=[[prediction[1], prediction[0], "CORRECT" if row["class_type"] == prediction[1] else "wrong"]], columns=['predicted','probability','correct?'])
+    row_frame = row.to_frame().T
+    output = pd.concat([row_frame, prediction_data.set_index(row_frame.index)], axis=1)
+    final = pd.concat([final, output])
+
+final = final.loc[:,~final.columns.str.startswith('has_legs')]
+
+print(final.to_csv(index=False, lineterminator='\n'))
